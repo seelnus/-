@@ -54,6 +54,20 @@ import { BrowserRouter, Navigate, Route, Routes, useNavigate, useParams } from '
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:3000/api';
 const FILE_BASE = API.replace(/\/api$/, '');
+const appLocale = {
+  ...zhCN,
+  Popconfirm: {
+    ...zhCN.Popconfirm,
+    cancelText: 'No',
+    okText: 'OK',
+  },
+  Modal: {
+    ...zhCN.Modal,
+    cancelText: 'No',
+    okText: 'OK',
+    justOkText: 'OK',
+  },
+};
 
 type SurveyKind = 'case_collection' | 'assessment' | 'promotional_document';
 type QuestionType = 'radio' | 'checkbox' | 'rating' | 'description' | 'text' | 'textarea' | 'file' | 'date' | 'datetime';
@@ -155,7 +169,7 @@ const paletteOptions: Array<{ type: QuestionType; label: string; icon: ReactNode
 function App() {
   return (
     <ConfigProvider
-      locale={zhCN}
+      locale={appLocale}
       theme={{
         token: {
           colorPrimary: '#4E73F5',
