@@ -1,0 +1,399 @@
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { Prisma, SurveyStatus, SurveyType } from '@prisma/client';
+import * as bcrypt from 'bcryptjs';
+import { stringify } from 'csv-stringify/sync';
+import { randomBytes } from 'crypto';
+import { PrismaService } from './prisma.service';
+import { SurveyQuestion, SurveySchema, emptySurveySchema } from './app.types';
+
+const mockUser = {
+  wecomUserid: 'mock-user-001',
+  name: '测试员工',
+  department: '测试部门',
+};
+
+@Injectable()
+export class AppService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jwt: JwtService,
+  ) {}
+
+  health() {
+    return { ok: true };
+  }
+
+  async login(phone: string, password: string) {
+    const admin = await this.prisma.adminUser.findUnique({ where: { phone } });
+    if (!admin) throw new UnauthorizedException('手机号或密码错误');
+
+    const matched = await bcrypt.compare(password, admin.passwordHash);
+    if (!matched) throw new UnauthorizedException('手机号或密码错误');
+
+    return {
+      token: this.jwt.sign({ sub: admin.id, name: admin.name, phone: admin.phone }),
+      admin: this.publicAdmin(admin),
+    };
+  }
+
+  async listMembers() {
+    const members = await this.prisma.adminUser.findMany({ orderBy: { createdAt: 'asc' } });
+    return members.map((item) => this.publicAdmin(item));
+  }
+
+  async createMember(data: { name: string; phone: string; password: string }) {
+    const passwordHash = await bcrypt.hash(data.password, 10);
+    const member = await this.prisma.adminUser.create({
+      data: { name: data.name, phone: data.phone, passwordHash },
+    });
+    return this.publicAdmin(member);
+  }
+
+  async deleteMember(id: number) {
+    const member = await this.prisma.adminUser.findUnique({ where: { id } });
+    if (!member) throw new NotFoundException('成员不存在');
+    if (member.isPrimary) throw new ForbiddenException('该账号为主账号，无法删除');
+    await this.prisma.adminUser.delete({ where: { id } });
+    return { ok: true };
+  }
+
+  async listContacts(query?: string) {
+    return this.prisma.contact.findMany({
+      where: query
+        ? {
+            OR: [
+              { name: { contains: query } },
+              { department: { contains: query } },
+              { jobNo: { contains: query } },
+            ],
+          }
+        : undefined,
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async createContact(data: any) {
+    return this.prisma.contact.create({ data: this.contactData(data, true) });
+  }
+
+  async updateContact(id: number, data: any) {
+    return this.prisma.contact.update({ where: { id }, data: this.contactData(data, true) });
+  }
+
+  async deleteContact(id: number) {
+    await this.prisma.contact.delete({ where: { id } });
+    return { ok: true };
+  }
+
+  async importContacts(rows: any[]) {
+    let count = 0;
+    let skipped = 0;
+    for (const row of rows) {
+      const data = this.contactData({
+        name: row.name || row['姓名'],
+        department: row.department || row['部门'],
+        jobNo: row.jobNo || row.job_no || row['工号'],
+        position: row.position || row['职位'],
+        phone: row.phone || row['手机号'],
+        email: row.email || row['邮箱'],
+        tags: row.tags || row['标签'],
+      });
+      if (!data.name || !data.phone) {
+        skipped += 1;
+        continue;
+      }
+      await this.prisma.contact.upsert({
+        where: { name: data.name },
+        create: data,
+        update: data,
+      });
+      count += 1;
+    }
+    return { count, skipped };
+  }
+
+  async exportContacts() {
+    const contacts = await this.prisma.contact.findMany({ orderBy: { createdAt: 'desc' } });
+    return stringify(
+      contacts.map((item) => ({
+        姓名: item.name,
+        部门: item.department || '',
+        工号: item.jobNo || '',
+        职位: item.position || '',
+        手机号: item.phone || '',
+        邮箱: item.email || '',
+        标签: item.tags || '',
+      })),
+      { header: true, bom: true },
+    );
+  }
+
+  async listSurveys(query: { keyword?: string; type?: SurveyType }) {
+    return this.prisma.survey.findMany({
+      where: {
+        isDeleted: false,
+        title: query.keyword ? { contains: query.keyword } : undefined,
+        type: query.type || undefined,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async getAdminSurvey(id: number) {
+    const survey = await this.prisma.survey.findFirst({ where: { id, isDeleted: false } });
+    if (!survey) throw new NotFoundException('问卷不存在');
+    return survey;
+  }
+
+  async createSurvey(adminId: number, data: any) {
+    const surveyType = data.type || SurveyType.assessment;
+    try {
+      return await this.prisma.survey.create({
+        data: {
+          title: data.title,
+          type: surveyType,
+          schemaJson: this.normalizeSchema(data.schemaJson, surveyType),
+          status: SurveyStatus.draft,
+          shareToken: randomBytes(16).toString('hex'),
+          createdBy: adminId,
+        },
+      });
+    } catch (error) {
+      this.handleSurveyWriteError(error);
+    }
+  }
+
+  async updateSurvey(id: number, data: any) {
+    await this.getAdminSurvey(id);
+    try {
+      return await this.prisma.survey.update({
+        where: { id },
+        data: {
+          title: data.title,
+          type: data.type,
+          schemaJson: this.normalizeSchema(data.schemaJson, data.type),
+        },
+      });
+    } catch (error) {
+      this.handleSurveyWriteError(error);
+    }
+  }
+
+  async publishSurvey(id: number) {
+    await this.getAdminSurvey(id);
+    return this.prisma.survey.update({ where: { id }, data: { status: SurveyStatus.published } });
+  }
+
+  async setSurveyStatus(id: number, status: SurveyStatus) {
+    await this.getAdminSurvey(id);
+    return this.prisma.survey.update({ where: { id }, data: { status } });
+  }
+
+  async deleteSurvey(id: number) {
+    await this.getAdminSurvey(id);
+    await this.prisma.survey.update({ where: { id }, data: { isDeleted: true, status: SurveyStatus.disabled } });
+    return { ok: true };
+  }
+
+  async getPublicSurvey(shareToken: string) {
+    const survey = await this.prisma.survey.findUnique({ where: { shareToken } });
+    if (!survey || survey.isDeleted) throw new NotFoundException('问卷不存在或已下线');
+    if (survey.status !== SurveyStatus.published) throw new ForbiddenException('该问卷暂未开放');
+
+    if (survey.type === SurveyType.promotional_document) {
+      return { ...survey, currentUser: mockUser, alreadySubmitted: false };
+    }
+
+    await this.ensureMockWecomUser();
+    const existing = await this.prisma.surveyResponse.findUnique({
+      where: { surveyId_wecomUserid: { surveyId: survey.id, wecomUserid: mockUser.wecomUserid } },
+    });
+    return { ...survey, currentUser: mockUser, alreadySubmitted: Boolean(existing) };
+  }
+
+  async submitSurvey(shareToken: string, answersJson: Record<string, unknown>) {
+    const survey = await this.getPublicSurvey(shareToken);
+    if (survey.type === SurveyType.promotional_document) {
+      throw new BadRequestException('宣传文档类不支持提交答卷');
+    }
+    if (survey.alreadySubmitted) throw new ConflictException('您已提交过该问卷');
+
+    this.validateAnswers(survey.schemaJson as SurveySchema, answersJson);
+    return this.prisma.surveyResponse.create({
+      data: {
+        surveyId: survey.id,
+        wecomUserid: mockUser.wecomUserid,
+        answersJson: answersJson as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  async listResponses(surveyId: number) {
+    await this.getAdminSurvey(surveyId);
+    const responses = await this.prisma.surveyResponse.findMany({
+      where: { surveyId },
+      include: { comment: true },
+      orderBy: { submittedAt: 'desc' },
+    });
+    const users = await this.prisma.wecomUser.findMany({
+      where: { wecomUserid: { in: responses.map((item) => item.wecomUserid) } },
+    });
+    const userMap = new Map(users.map((item) => [item.wecomUserid, item]));
+    return responses.map((item) => ({ ...item, wecomUser: userMap.get(item.wecomUserid) || null }));
+  }
+
+  async commentResponse(adminId: number, responseId: number, data: { comment?: string; score?: number }) {
+    if (data.score && (data.score < 1 || data.score > 10)) {
+      throw new BadRequestException('评分范围为 1~10');
+    }
+    return this.prisma.responseComment.create({
+      data: {
+        responseId,
+        adminId,
+        comment: data.comment || '',
+        score: data.score,
+      },
+    });
+  }
+
+  async exportSurvey(surveyId: number) {
+    const survey = await this.getAdminSurvey(surveyId);
+
+    if (survey.type === SurveyType.promotional_document) {
+      return stringify(
+        [{ 标题: survey.title, 类型: '宣传文档类', 内容HTML: (survey.schemaJson as SurveySchema).contentHtml || '' }],
+        { header: true, bom: true },
+      );
+    }
+
+    const responses = await this.listResponses(surveyId);
+    const contacts = await this.prisma.contact.findMany();
+    const contactMap = new Map(contacts.map((item) => [item.name, item]));
+    const questions = ((survey.schemaJson as SurveySchema).questions || []) as SurveyQuestion[];
+    const rows = responses.map((item: any) => {
+      const name = item.wecomUser?.name || '';
+      const contact = contactMap.get(name);
+      const base: Record<string, unknown> = {
+        提交人企微姓名: name,
+        关联联系人工号: contact?.jobNo || '',
+        关联联系人部门: contact?.department || '',
+        提交时间: item.submittedAt.toISOString(),
+      };
+      for (const question of questions) {
+        if (question.type === 'description') continue;
+        const value = (item.answersJson || {})[question.id];
+        base[question.label] = Array.isArray(value) ? value.join('、') : value || '';
+      }
+      base.点评内容 = item.comment?.comment || '';
+      base.评分 = item.comment?.score || '';
+      return base;
+    });
+    return stringify(rows, { header: true, bom: true });
+  }
+
+  private normalizeSchema(schemaJson: SurveySchema | undefined, surveyType: SurveyType): SurveySchema {
+    if (surveyType === SurveyType.promotional_document) {
+      return {
+        questions: [],
+        contentHtml: typeof schemaJson?.contentHtml === 'string' ? schemaJson.contentHtml : '',
+      };
+    }
+
+    if (!schemaJson || !Array.isArray(schemaJson.questions)) return emptySurveySchema;
+    return {
+      questions: schemaJson.questions.map((question, index) => ({
+        id: question.id || `q${index + 1}`,
+        type: question.type,
+        label: question.type === 'description' ? question.description || question.label : question.label,
+        description: question.description || '',
+        required: question.type === 'description' ? false : Boolean(question.required),
+        options: question.type === 'description' ? [] : question.options || [],
+        maxScore: question.type === 'rating' ? 10 : question.maxScore,
+        maxSizeMB: question.type === 'file' ? 20 : question.maxSizeMB,
+        accept: question.type === 'file' ? ['.jpg', '.png', '.pdf', '.doc', '.docx', '.xlsx'] : question.accept,
+        visibleWhen: question.visibleWhen,
+      })),
+      contentHtml: '',
+    };
+  }
+
+  private validateAnswers(schema: SurveySchema, answers: Record<string, unknown>) {
+    for (const question of schema.questions || []) {
+      if (!this.isVisible(question, answers)) continue;
+      if (question.type === 'description') continue;
+      const value = answers[question.id];
+      if (
+        question.required &&
+        (value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0))
+      ) {
+        throw new BadRequestException(`请填写：${question.label}`);
+      }
+      if (question.type === 'rating' && value !== undefined && value !== null && value !== '') {
+        const score = Number(value);
+        const maxScore = question.maxScore || 10;
+        if (!Number.isInteger(score) || score < 1 || score > maxScore) {
+          throw new BadRequestException(`${question.label} 的评分范围为 1~${maxScore}`);
+        }
+      }
+    }
+  }
+
+  private isVisible(question: SurveyQuestion, answers: Record<string, unknown>) {
+    if (!question.visibleWhen) return true;
+    const parent = answers[question.visibleWhen.questionId];
+    if (Array.isArray(parent)) {
+      return parent.some((item) => question.visibleWhen?.valueIn.includes(String(item)));
+    }
+    return question.visibleWhen.valueIn.includes(String(parent));
+  }
+
+  private contactData(data: any, required = false) {
+    const name = String(data.name || '').trim();
+    const phone = String(data.phone || '').trim();
+    if (required && !name) throw new BadRequestException('请输入姓名');
+    if (required && !phone) throw new BadRequestException('请输入手机号');
+
+    return {
+      name,
+      department: data.department || null,
+      jobNo: data.jobNo || null,
+      position: data.position || null,
+      phone,
+      email: data.email || null,
+      tags: data.tags || null,
+    };
+  }
+
+  private handleSurveyWriteError(error: unknown): never {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      throw new ConflictException('问卷名称已存在，请更换名称后再保存');
+    }
+    throw error;
+  }
+
+  private publicAdmin(admin: any) {
+    return {
+      id: admin.id,
+      name: admin.name,
+      phone: admin.phone,
+      isPrimary: admin.isPrimary,
+      createdAt: admin.createdAt,
+    };
+  }
+
+  private async ensureMockWecomUser() {
+    await this.prisma.wecomUser.upsert({
+      where: { wecomUserid: mockUser.wecomUserid },
+      create: mockUser,
+      update: { name: mockUser.name, department: mockUser.department },
+    });
+  }
+}

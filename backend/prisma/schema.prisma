@@ -1,0 +1,102 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum SurveyType {
+  case_collection
+  assessment
+  promotional_document
+}
+
+enum SurveyStatus {
+  draft
+  published
+  disabled
+}
+
+model AdminUser {
+  id           Int      @id @default(autoincrement()) @db.UnsignedInt
+  name         String   @db.VarChar(100)
+  phone        String   @unique @db.VarChar(20)
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  isPrimary    Boolean  @default(false) @map("is_primary")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("admin_users")
+}
+
+model Contact {
+  id         Int      @id @default(autoincrement()) @db.UnsignedInt
+  name       String   @unique @db.VarChar(100)
+  department String?  @db.VarChar(200)
+  jobNo      String?  @map("job_no") @db.VarChar(50)
+  position   String?  @db.VarChar(100)
+  phone      String   @db.VarChar(20)
+  email      String?  @db.VarChar(100)
+  tags       String?  @db.VarChar(255)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("contacts")
+}
+
+model WecomUser {
+  id          Int      @id @default(autoincrement()) @db.UnsignedInt
+  wecomUserid String   @unique @map("wecom_userid") @db.VarChar(64)
+  name        String?  @db.VarChar(100)
+  department  String?  @db.VarChar(200)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("wecom_users")
+}
+
+model Survey {
+  id         Int          @id @default(autoincrement()) @db.UnsignedInt
+  title      String       @db.VarChar(200)
+  type       SurveyType   @default(assessment)
+  schemaJson Json         @map("schema_json")
+  status     SurveyStatus @default(draft)
+  shareToken String       @unique @map("share_token") @db.VarChar(64)
+  isDeleted  Boolean      @default(false) @map("is_deleted")
+  createdBy  Int          @map("created_by") @db.UnsignedInt
+  createdAt  DateTime     @default(now()) @map("created_at")
+  updatedAt  DateTime     @updatedAt @map("updated_at")
+
+  responses SurveyResponse[]
+
+  @@map("surveys")
+}
+
+model SurveyResponse {
+  id           Int      @id @default(autoincrement()) @db.UnsignedInt
+  surveyId     Int      @map("survey_id") @db.UnsignedInt
+  wecomUserid  String   @map("wecom_userid") @db.VarChar(64)
+  answersJson  Json     @map("answers_json")
+  submittedAt  DateTime @default(now()) @map("submitted_at")
+
+  survey  Survey           @relation(fields: [surveyId], references: [id])
+  comment ResponseComment?
+
+  @@unique([surveyId, wecomUserid], map: "uk_one_submission")
+  @@map("survey_responses")
+}
+
+model ResponseComment {
+  id         Int      @id @default(autoincrement()) @db.UnsignedInt
+  responseId Int      @unique @map("response_id") @db.UnsignedInt
+  adminId    Int      @map("admin_id") @db.UnsignedInt
+  comment    String?  @db.Text
+  score      Int?     @db.UnsignedTinyInt
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  response SurveyResponse @relation(fields: [responseId], references: [id])
+
+  @@map("response_comments")
+}
