@@ -1991,7 +1991,6 @@ function FillPage() {
     const token = localStorage.getItem('fill_token');
     if (!token) {
       // 无 token → 跳转企微授权
-      const state = encodeURIComponent(`/s/${shareToken}`);
       window.location.href = `${API.replace('/api', '')}/api/wecom/oauth/url?state=/s/${shareToken}`;
       return;
     }
