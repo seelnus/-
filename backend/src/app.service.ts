@@ -336,7 +336,7 @@ export class AppService {
     const base = process.env.FRONTEND_ORIGIN?.replace(/\/$/, '') || 'https://hr.mmcb.top';
     const redirectUri = encodeURIComponent(`${base}/api/wecom/oauth/callback`);
     const encodedState = encodeURIComponent(state);
-    return `https://login.work.weixin.qq.com/wwlogin/sso/login?login_type=ServiceApp&appid=${corpId}&agentid=${agentId}&redirect_uri=${redirectUri}&state=${encodedState}`;
+    return `https://login.work.weixin.qq.com/wwlogin/sso/login?login_type=CorpApp&appid=${corpId}&agentid=${agentId}&redirect_uri=${redirectUri}&state=${encodedState}`;
   }
 
   async handleWecomCallback(code: string): Promise<{ token: string; name: string }> {
