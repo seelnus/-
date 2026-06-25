@@ -92,11 +92,11 @@ ResponseComment  管理员点评
 
 ## 生产部署
 
-项目已部署至：**https://hr.mmcb.top**
+项目已部署至：
 
 ### 服务器环境
 
-- 阿里云 ECS · IP：`47.97.80.44`
+- 阿里云 ECS · IP：`
 - 宝塔面板 + Docker 26.1.3
 - Nginx 反向代理（宝塔管理）
 - SSL 证书：Let's Encrypt，到期 2026-09-23
