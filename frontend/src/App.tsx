@@ -79,6 +79,7 @@ type Question = {
   description?: string;
   required?: boolean;
   options?: string[];
+  hasOther?: boolean;
   maxScore?: number;
   visibleWhen?: { questionId: string; valueIn: string[] };
 };
@@ -1027,6 +1028,26 @@ function QuestionEditor({
               <Button className="option-action-button" type="text" onClick={openBatch}>
                 批量编辑
               </Button>
+              {!question.hasOther && (
+                <Button
+                  className="option-action-button"
+                  type="text"
+                  icon={<PlusCircleOutlined />}
+                  onClick={() => onChange({ ...question, hasOther: true })}
+                >
+                  添加其他
+                </Button>
+              )}
+              {question.hasOther && (
+                <Button
+                  className="option-action-button"
+                  type="text"
+                  danger
+                  onClick={() => onChange({ ...question, hasOther: false })}
+                >
+                  移除其他
+                </Button>
+              )}
             </Space>
           </div>
         )}
@@ -2159,6 +2180,9 @@ function FillPage() {
 
 function QuestionInput({ question, value, onChange }: { question: Question; value: any; onChange: (value: any) => void }) {
   if (question.type === 'radio') {
+    const otherPrefix = '__other__:';
+    const isOtherSelected = typeof value === 'string' && value.startsWith(otherPrefix);
+    const otherText = isOtherSelected ? value.slice(otherPrefix.length) : '';
     return (
       <div className="fill-choice-group">
         {(question.options || []).map((item) => (
@@ -2172,11 +2196,37 @@ function QuestionInput({ question, value, onChange }: { question: Question; valu
             <span className="fill-choice-label">{item}</span>
           </button>
         ))}
+        {question.hasOther && (
+          <div className={`fill-choice-row fill-other-row ${isOtherSelected ? 'selected' : ''}`}>
+            <button
+              type="button"
+              className="fill-other-btn"
+              onClick={() => onChange(isOtherSelected ? '' : otherPrefix)}
+            >
+              <span className="choice-symbol" />
+              <span className="fill-choice-label">其他</span>
+            </button>
+            {isOtherSelected && (
+              <input
+                className="fill-other-input"
+                autoFocus
+                placeholder="请填写..."
+                value={otherText}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => onChange(`${otherPrefix}${e.target.value}`)}
+              />
+            )}
+          </div>
+        )}
       </div>
     );
   }
   if (question.type === 'checkbox') {
     const currentValues = Array.isArray(value) ? value : [];
+    const otherPrefix = '__other__:';
+    const otherEntry = currentValues.find((v: string) => v.startsWith(otherPrefix));
+    const isOtherChecked = Boolean(otherEntry);
+    const otherText = otherEntry ? otherEntry.slice(otherPrefix.length) : '';
     return (
       <div className="fill-choice-group">
         {(question.options || []).map((item) => {
@@ -2186,13 +2236,44 @@ function QuestionInput({ question, value, onChange }: { question: Question; valu
               key={item}
               type="button"
               className={`fill-choice-row ${checked ? 'selected' : ''}`}
-              onClick={() => onChange(checked ? currentValues.filter((entry) => entry !== item) : [...currentValues, item])}
+              onClick={() => onChange(checked ? currentValues.filter((entry: string) => entry !== item) : [...currentValues, item])}
             >
               <span className="choice-symbol checkbox-symbol" />
               <span className="fill-choice-label">{item}</span>
             </button>
           );
         })}
+        {question.hasOther && (
+          <div className={`fill-choice-row fill-other-row ${isOtherChecked ? 'selected' : ''}`}>
+            <button
+              type="button"
+              className="fill-other-btn"
+              onClick={() => {
+                if (isOtherChecked) {
+                  onChange(currentValues.filter((v: string) => !v.startsWith(otherPrefix)));
+                } else {
+                  onChange([...currentValues, `${otherPrefix}`]);
+                }
+              }}
+            >
+              <span className="choice-symbol checkbox-symbol" />
+              <span className="fill-choice-label">其他</span>
+            </button>
+            {isOtherChecked && (
+              <input
+                className="fill-other-input"
+                autoFocus
+                placeholder="请填写..."
+                value={otherText}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => {
+                  const filtered = currentValues.filter((v: string) => !v.startsWith(otherPrefix));
+                  onChange([...filtered, `${otherPrefix}${e.target.value}`]);
+                }}
+              />
+            )}
+          </div>
+        )}
       </div>
     );
   }

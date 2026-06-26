@@ -1189,6 +1189,39 @@ textarea.auto-resize:focus {
   border-color: #4f6ef7;
 }
 
+.fill-other-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  cursor: default;
+}
+
+.fill-other-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 12px 14px;
+  font-size: 15px;
+  color: inherit;
+}
+
+.fill-other-input {
+  flex: 1;
+  border: none;
+  border-bottom: 1.5px solid #4f6ef7;
+  background: transparent;
+  outline: none;
+  font-size: 15px;
+  padding: 4px 2px;
+  margin-right: 14px;
+  color: inherit;
+}
+
 .fill-choice-row.selected .choice-symbol:not(.checkbox-symbol) {
   box-shadow: inset 0 0 0 4px #eef2ff, inset 0 0 0 8px #4f6ef7;
 }
