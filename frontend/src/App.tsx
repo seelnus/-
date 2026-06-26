@@ -1016,6 +1016,12 @@ function QuestionEditor({
                 <Button className="option-delete-button" type="text" danger icon={<DeleteOutlined />} onClick={() => removeOption(optionIndex)} />
               </div>
             ))}
+            {question.hasOther && (
+              <div className="option-row option-row-other">
+                <span className={`choice-symbol ${question.type === 'checkbox' ? 'checkbox-symbol' : ''}`} />
+                <span className="option-other-preview">其他 <span className="option-other-underline">___________</span></span>
+              </div>
+            )}
             <Space className="option-actions" split={<span className="option-action-divider">|</span>}>
               <Button
                 className="option-action-button"

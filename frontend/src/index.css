@@ -803,6 +803,22 @@ textarea.title-auto-resize::placeholder {
   opacity: 1;
 }
 
+.option-row-other {
+  grid-template-columns: 20px minmax(0, 1fr);
+  cursor: default;
+}
+
+.option-other-preview {
+  font-size: 14px;
+  color: #888;
+  padding: 4px 0;
+}
+
+.option-other-underline {
+  letter-spacing: 2px;
+  color: #bbb;
+}
+
 .option-actions {
   margin-top: 6px;
   gap: 0;
