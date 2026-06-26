@@ -475,10 +475,13 @@ export class AppService {
         关联联系人部门: contact?.department || '',
         提交时间: item.submittedAt.toISOString(),
       };
+      let qNo = 0;
       for (const question of questions) {
         if (question.type === 'description') continue;
+        qNo++;
         const value = (item.answersJson || {})[question.id];
-        base[question.label] = Array.isArray(value) ? value.join('、') : value || '';
+        const colKey = `Q${qNo}_${question.label}`;
+        base[colKey] = Array.isArray(value) ? value.join('、') : value || '';
       }
       base.点评内容 = item.comment?.comment || '';
       base.评分 = item.comment?.score || '';
