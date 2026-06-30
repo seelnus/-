@@ -137,12 +137,19 @@ export class AppService {
     );
   }
 
-  async listSurveys(query: { keyword?: string; type?: SurveyType }) {
+  async listSurveys(query: { keyword?: string; type?: SurveyType; folderId?: number | 'unclassified' }) {
+    const folderFilter =
+      query.folderId === 'unclassified'
+        ? { folderId: null }
+        : query.folderId !== undefined
+        ? { folderId: query.folderId as number }
+        : {};
     return this.prisma.survey.findMany({
       where: {
         isDeleted: false,
         title: query.keyword ? { contains: query.keyword } : undefined,
         type: query.type || undefined,
+        ...folderFilter,
       },
       select: {
         id: true,
@@ -152,9 +159,41 @@ export class AppService {
         shareToken: true,
         createdAt: true,
         createdBy: true,
+        folderId: true,
       },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  async listFolders() {
+    const folders = await this.prisma.surveyFolder.findMany({
+      orderBy: { createdAt: 'asc' },
+      include: { _count: { select: { surveys: { where: { isDeleted: false } } } } },
+    });
+    const unclassifiedCount = await this.prisma.survey.count({
+      where: { isDeleted: false, folderId: null },
+    });
+    return { folders, unclassifiedCount };
+  }
+
+  async createFolder(adminId: number, name: string) {
+    if (!name?.trim()) throw new BadRequestException('文件夹名称不能为空');
+    return this.prisma.surveyFolder.create({ data: { name: name.trim(), createdBy: adminId } });
+  }
+
+  async updateFolder(id: number, name: string) {
+    if (!name?.trim()) throw new BadRequestException('文件夹名称不能为空');
+    return this.prisma.surveyFolder.update({ where: { id }, data: { name: name.trim() } });
+  }
+
+  async deleteFolder(id: number) {
+    await this.prisma.survey.updateMany({ where: { folderId: id }, data: { folderId: null } });
+    await this.prisma.surveyFolder.delete({ where: { id } });
+    return { ok: true };
+  }
+
+  async moveSurveyToFolder(surveyId: number, folderId: number | null) {
+    return this.prisma.survey.update({ where: { id: surveyId }, data: { folderId: folderId ?? null } });
   }
 
   async listWhitelists() {

@@ -29,6 +29,7 @@ model AdminUser {
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   createdWhitelists SurveyWhitelist[]
+  createdFolders    SurveyFolder[]
 
   @@map("admin_users")
 }
@@ -60,6 +61,19 @@ model WecomUser {
   @@map("wecom_users")
 }
 
+model SurveyFolder {
+  id        Int      @id @default(autoincrement()) @db.UnsignedInt
+  name      String   @db.VarChar(100)
+  createdBy Int      @map("created_by") @db.UnsignedInt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  admin   AdminUser @relation(fields: [createdBy], references: [id])
+  surveys Survey[]
+
+  @@map("survey_folders")
+}
+
 model Survey {
   id         Int          @id @default(autoincrement()) @db.UnsignedInt
   title      String       @db.VarChar(200)
@@ -69,11 +83,13 @@ model Survey {
   shareToken String       @unique @map("share_token") @db.VarChar(64)
   isDeleted  Boolean      @default(false) @map("is_deleted")
   createdBy  Int          @map("created_by") @db.UnsignedInt
+  folderId   Int?         @map("folder_id") @db.UnsignedInt
   createdAt  DateTime     @default(now()) @map("created_at")
   updatedAt  DateTime     @updatedAt @map("updated_at")
 
   responses SurveyResponse[]
   whitelist SurveyWhitelist?
+  folder    SurveyFolder?    @relation(fields: [folderId], references: [id])
 
   @@map("surveys")
 }

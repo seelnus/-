@@ -115,6 +115,14 @@ type Survey = {
   shareToken: string;
   schemaJson: SurveySchema;
   createdAt: string;
+  folderId?: number | null;
+};
+
+type SurveyFolder = {
+  id: number;
+  name: string;
+  createdAt: string;
+  _count: { surveys: number };
 };
 
 type Contact = {
@@ -338,29 +346,106 @@ function AdminShell() {
 
 function SurveyList() {
   const navigate = useNavigate();
-  const { message } = AntApp.useApp();
+  const { message, modal } = AntApp.useApp();
+
+  // 文件夹视图状态
+  const [folders, setFolders] = useState<SurveyFolder[]>([]);
+  const [unclassifiedCount, setUnclassifiedCount] = useState(0);
+  const [currentFolder, setCurrentFolder] = useState<SurveyFolder | 'unclassified' | null>(null);
+  const [folderModal, setFolderModal] = useState<{ open: boolean; mode: 'create' | 'rename'; folder?: SurveyFolder }>({ open: false, mode: 'create' });
+  const [folderName, setFolderName] = useState('');
+  const [folderSaving, setFolderSaving] = useState(false);
+
+  // 问卷列表状态
   const [data, setData] = useState<Survey[]>([]);
   const [keyword, setKeyword] = useState('');
   const [type, setType] = useState<SurveyKind | undefined>();
+
+  // 移动问卷弹窗
+  const [moveModal, setMoveModal] = useState<{ open: boolean; survey: Survey | null }>({ open: false, survey: null });
+  const [moveTarget, setMoveTarget] = useState<number | 'unclassified' | undefined>(undefined);
+  const [moving, setMoving] = useState(false);
+
+  // 导出弹窗
   const [exportModal, setExportModal] = useState<{ open: boolean; surveyId: number | null; surveyTitle: string }>({ open: false, surveyId: null, surveyTitle: '' });
   const [exportRange, setExportRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(null);
   const [exporting, setExporting] = useState(false);
 
-  async function load(filters?: { keyword?: string; type?: SurveyKind }) {
+  async function loadFolders() {
+    const res = await http.get('/admin/folders');
+    setFolders(res.data.folders);
+    setUnclassifiedCount(res.data.unclassifiedCount);
+  }
+
+  async function loadSurveys(filters?: { keyword?: string; type?: SurveyKind }) {
     const nextKeyword = filters?.keyword ?? keyword;
     const nextType = filters?.type ?? type;
-    const res = await http.get('/admin/surveys', { params: { keyword: nextKeyword, type: nextType } });
+    const folderId = currentFolder === 'unclassified' ? 'unclassified' : currentFolder?.id;
+    const res = await http.get('/admin/surveys', { params: { keyword: nextKeyword, type: nextType, folderId } });
     setData(res.data);
   }
 
-  useEffect(() => {
-    load();
-  }, []);
+  useEffect(() => { loadFolders(); }, []);
+  useEffect(() => { if (currentFolder !== null) loadSurveys(); }, [currentFolder]);
 
   async function setStatus(survey: Survey, checked: boolean) {
     await http.put(`/admin/surveys/${survey.id}/status`, { status: checked ? 'published' : 'disabled' });
     message.success('状态已更新');
-    load();
+    loadSurveys();
+  }
+
+  async function handleFolderSave() {
+    if (!folderName.trim()) { message.error('请输入文件夹名称'); return; }
+    setFolderSaving(true);
+    try {
+      if (folderModal.mode === 'create') {
+        await http.post('/admin/folders', { name: folderName });
+        message.success('文件夹已创建');
+      } else {
+        await http.put(`/admin/folders/${folderModal.folder!.id}`, { name: folderName });
+        message.success('已重命名');
+        if (currentFolder !== 'unclassified' && currentFolder?.id === folderModal.folder!.id) {
+          setCurrentFolder({ ...currentFolder, name: folderName });
+        }
+      }
+      setFolderModal({ open: false, mode: 'create' });
+      setFolderName('');
+      loadFolders();
+    } finally {
+      setFolderSaving(false);
+    }
+  }
+
+  async function handleDeleteFolder(folder: SurveyFolder) {
+    modal.confirm({
+      title: `删除文件夹「${folder.name}」`,
+      content: '文件夹内的问卷将移入「未分类」，问卷本身不会被删除。',
+      okText: '确认删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        await http.delete(`/admin/folders/${folder.id}`);
+        message.success('文件夹已删除');
+        if (currentFolder !== 'unclassified' && currentFolder?.id === folder.id) setCurrentFolder(null);
+        loadFolders();
+      },
+    });
+  }
+
+  async function handleMoveConfirm() {
+    if (!moveModal.survey) return;
+    setMoving(true);
+    try {
+      const folderId = moveTarget === 'unclassified' ? null : (moveTarget ?? null);
+      await http.put(`/admin/surveys/${moveModal.survey.id}/folder`, { folderId });
+      message.success('已移动');
+      setMoveModal({ open: false, survey: null });
+      setMoveTarget(undefined);
+      loadSurveys();
+      loadFolders();
+    } finally {
+      setMoving(false);
+    }
   }
 
   async function handleExportConfirm() {
@@ -380,6 +465,84 @@ function SurveyList() {
     }
   }
 
+  const folderName_ = currentFolder === 'unclassified' ? '未分类' : currentFolder?.name ?? '';
+
+  // ── 文件夹列表页 ──────────────────────────────
+  if (currentFolder === null) {
+    return (
+      <>
+        <div className="toolbar">
+          <h1 className="page-title">问卷管理</h1>
+          <Space>
+            <Button icon={<PlusOutlined />} onClick={() => { setFolderName(''); setFolderModal({ open: true, mode: 'create' }); }}>
+              新建文件夹
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/surveys/new')} className="gradient-btn">
+              新建问卷
+            </Button>
+          </Space>
+        </div>
+        <Card>
+          <div style={{ marginBottom: 16, fontSize: 13, color: '#888' }}>共 {folders.length} 个文件夹</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12, marginBottom: 24 }}>
+            {folders.map((folder) => (
+              <div
+                key={folder.id}
+                onClick={() => setCurrentFolder(folder)}
+                style={{ border: '1px solid #e8e8e8', borderRadius: 10, padding: '16px 14px', cursor: 'pointer', position: 'relative', background: '#fafafa', transition: 'box-shadow .2s' }}
+                onMouseEnter={(e) => (e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,.1)')}
+                onMouseLeave={(e) => (e.currentTarget.style.boxShadow = 'none')}
+              >
+                <div style={{ fontSize: 28, marginBottom: 8, color: '#4E73F5' }}>📁</div>
+                <div style={{ fontWeight: 500, fontSize: 14, marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{folder.name}</div>
+                <div style={{ fontSize: 12, color: '#aaa' }}>{folder._count.surveys} 份问卷</div>
+                <div style={{ position: 'absolute', top: 8, right: 8, display: 'flex', gap: 2 }} onClick={(e) => e.stopPropagation()}>
+                  <Button
+                    type="text" size="small" icon={<EditOutlined />}
+                    onClick={() => { setFolderName(folder.name); setFolderModal({ open: true, mode: 'rename', folder }); }}
+                  />
+                  <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={() => handleDeleteFolder(folder)} />
+                </div>
+              </div>
+            ))}
+            {/* 未分类桶 */}
+            <div
+              onClick={() => setCurrentFolder('unclassified')}
+              style={{ border: '1px dashed #d9d9d9', borderRadius: 10, padding: '16px 14px', cursor: 'pointer', background: '#fff', transition: 'box-shadow .2s' }}
+              onMouseEnter={(e) => (e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,.08)')}
+              onMouseLeave={(e) => (e.currentTarget.style.boxShadow = 'none')}
+            >
+              <div style={{ fontSize: 28, marginBottom: 8, color: '#aaa' }}>📂</div>
+              <div style={{ fontWeight: 500, fontSize: 14, marginBottom: 4, color: '#888' }}>未分类</div>
+              <div style={{ fontSize: 12, color: '#aaa' }}>{unclassifiedCount} 份问卷</div>
+            </div>
+          </div>
+        </Card>
+
+        {/* 新建/重命名文件夹 Modal */}
+        <Modal
+          title={folderModal.mode === 'create' ? '新建文件夹' : '重命名文件夹'}
+          open={folderModal.open}
+          onCancel={() => setFolderModal({ open: false, mode: 'create' })}
+          onOk={handleFolderSave}
+          okText="保存"
+          cancelText="取消"
+          confirmLoading={folderSaving}
+        >
+          <Input
+            placeholder="文件夹名称"
+            value={folderName}
+            onChange={(e) => setFolderName(e.target.value)}
+            onPressEnter={handleFolderSave}
+            maxLength={50}
+            style={{ marginTop: 8 }}
+          />
+        </Modal>
+      </>
+    );
+  }
+
+  // ── 文件夹内问卷列表页 ────────────────────────
   const thisMonth = new Date().toISOString().slice(0, 7);
   const stats = {
     total: data.length,
@@ -390,71 +553,48 @@ function SurveyList() {
 
   return (
     <>
+      {/* 面包屑 + 操作栏 */}
       <div className="toolbar">
-        <h1 className="page-title">问卷管理</h1>
+        <Space style={{ fontSize: 14 }}>
+          <span style={{ color: '#4E73F5', cursor: 'pointer' }} onClick={() => { setCurrentFolder(null); setData([]); setKeyword(''); setType(undefined); }}>
+            问卷管理
+          </span>
+          <span style={{ color: '#aaa' }}>/</span>
+          <span style={{ fontWeight: 500 }}>{folderName_}</span>
+        </Space>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/surveys/new')} className="gradient-btn">
           新建问卷
         </Button>
       </div>
-      {/* 统计卡片行 */}
+
+      {/* 统计卡片 */}
       <div className="stats-row">
         <div className="stat-card">
           <div className="stat-card-icon" style={{ background: 'linear-gradient(135deg, #4E73F5, #7C54E8)' }}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-              <line x1="16" y1="13" x2="8" y2="13"/>
-              <line x1="16" y1="17" x2="8" y2="17"/>
-              <polyline points="10 9 9 9 8 9"/>
-            </svg>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
           </div>
-          <div>
-            <div className="stat-card-value">{stats.total}</div>
-            <div className="stat-card-label">问卷总数</div>
-          </div>
+          <div><div className="stat-card-value">{stats.total}</div><div className="stat-card-label">问卷总数</div></div>
         </div>
         <div className="stat-card">
           <div className="stat-card-icon" style={{ background: 'linear-gradient(135deg, #52C41A, #73D13D)' }}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10"/>
-              <polyline points="9 12 11 14 15 10"/>
-            </svg>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/></svg>
           </div>
-          <div>
-            <div className="stat-card-value">{stats.enabled}</div>
-            <div className="stat-card-label">已启用</div>
-          </div>
+          <div><div className="stat-card-value">{stats.enabled}</div><div className="stat-card-label">已启用</div></div>
         </div>
         <div className="stat-card">
           <div className="stat-card-icon" style={{ background: 'linear-gradient(135deg, #FF7A45, #FF9C6E)' }}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10"/>
-              <line x1="10" y1="15" x2="10" y2="9"/>
-              <line x1="14" y1="15" x2="14" y2="9"/>
-            </svg>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>
           </div>
-          <div>
-            <div className="stat-card-value">{stats.disabled}</div>
-            <div className="stat-card-label">已禁用</div>
-          </div>
+          <div><div className="stat-card-value">{stats.disabled}</div><div className="stat-card-label">已禁用</div></div>
         </div>
         <div className="stat-card">
           <div className="stat-card-icon" style={{ background: 'linear-gradient(135deg, #13C2C2, #36CFC9)' }}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-              <line x1="16" y1="2" x2="16" y2="6"/>
-              <line x1="8" y1="2" x2="8" y2="6"/>
-              <line x1="3" y1="10" x2="21" y2="10"/>
-              <line x1="12" y1="14" x2="12" y2="18"/>
-              <line x1="10" y1="16" x2="14" y2="16"/>
-            </svg>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="12" y1="14" x2="12" y2="18"/><line x1="10" y1="16" x2="14" y2="16"/></svg>
           </div>
-          <div>
-            <div className="stat-card-value">{stats.newThisMonth}</div>
-            <div className="stat-card-label">本月新增</div>
-          </div>
+          <div><div className="stat-card-value">{stats.newThisMonth}</div><div className="stat-card-label">本月新增</div></div>
         </div>
       </div>
+
       <Card>
         <div className="toolbar">
           <div className="toolbar-left">
@@ -462,11 +602,8 @@ function SurveyList() {
               placeholder="搜索问卷名称"
               allowClear
               value={keyword}
-              onChange={(event) => setKeyword(event.target.value)}
-              onSearch={(value) => {
-                setKeyword(value);
-                load({ keyword: value });
-              }}
+              onChange={(e) => setKeyword(e.target.value)}
+              onSearch={(value) => { setKeyword(value); loadSurveys({ keyword: value }); }}
               style={{ width: 240 }}
             />
             <Select
@@ -474,13 +611,10 @@ function SurveyList() {
               placeholder="类型"
               style={{ width: 180 }}
               value={type}
-              onChange={(value) => {
-                setType(value);
-                load({ type: value });
-              }}
+              onChange={(value) => { setType(value); loadSurveys({ type: value }); }}
               options={surveyTypeOptions}
             />
-            <Button onClick={() => load({ keyword, type })}>搜索</Button>
+            <Button onClick={() => loadSurveys({ keyword, type })}>搜索</Button>
           </div>
         </div>
         <Table
@@ -488,44 +622,25 @@ function SurveyList() {
           dataSource={data}
           columns={[
             { title: '问卷名称', dataIndex: 'title' },
+            { title: '类型', dataIndex: 'type', render: (v: SurveyKind) => <Tag color={surveyTypeColor(v)}>{surveyTypeLabel(v)}</Tag> },
             {
-              title: '类型',
-              dataIndex: 'type',
-              render: (value: SurveyKind) => <Tag color={surveyTypeColor(value)}>{surveyTypeLabel(value)}</Tag>,
-            },
-            {
-              title: '启用状态',
-              dataIndex: 'status',
+              title: '启用状态', dataIndex: 'status',
               render: (_: unknown, row: Survey) => (
-                <Switch
-                  checked={row.status === 'published'}
-                  checkedChildren="已启用"
-                  unCheckedChildren="未启用"
-                  onChange={(checked) => setStatus(row, checked)}
-                />
+                <Switch checked={row.status === 'published'} checkedChildren="已启用" unCheckedChildren="未启用" onChange={(checked) => setStatus(row, checked)} />
               ),
             },
-            { title: '创建时间', dataIndex: 'createdAt', render: (value: string) => new Date(value).toLocaleString() },
+            { title: '创建时间', dataIndex: 'createdAt', render: (v: string) => new Date(v).toLocaleString() },
             {
               title: '操作',
               render: (_: unknown, row: Survey) => (
                 <Space>
-                  <Button icon={<EditOutlined />} onClick={() => navigate(`/surveys/${row.id}/edit`)}>
-                    编辑
-                  </Button>
-                  <Button icon={<LinkOutlined />} onClick={() => navigate(`/surveys/${row.id}/share`)}>
-                    分享
-                  </Button>
-                  <Button icon={<EyeOutlined />} onClick={() => navigate(`/surveys/${row.id}/responses`)}>
-                    数据
-                  </Button>
-                  <Button icon={<DownloadOutlined />} onClick={() => { setExportRange(null); setExportModal({ open: true, surveyId: row.id, surveyTitle: row.title }); }}>
-                    导出 CSV
-                  </Button>
-                  <Popconfirm title="确认删除该问卷？" cancelText="No" onConfirm={async () => { await http.delete(`/admin/surveys/${row.id}`); load(); }}>
-                    <Button danger icon={<DeleteOutlined />}>
-                      删除
-                    </Button>
+                  <Button icon={<EditOutlined />} onClick={() => navigate(`/surveys/${row.id}/edit`)}>编辑</Button>
+                  <Button icon={<LinkOutlined />} onClick={() => navigate(`/surveys/${row.id}/share`)}>分享</Button>
+                  <Button icon={<EyeOutlined />} onClick={() => navigate(`/surveys/${row.id}/responses`)}>数据</Button>
+                  <Button icon={<DownloadOutlined />} onClick={() => { setExportRange(null); setExportModal({ open: true, surveyId: row.id, surveyTitle: row.title }); }}>导出 CSV</Button>
+                  <Button onClick={() => { setMoveTarget(undefined); setMoveModal({ open: true, survey: row }); }}>移动</Button>
+                  <Popconfirm title="确认删除该问卷？" cancelText="取消" onConfirm={async () => { await http.delete(`/admin/surveys/${row.id}`); loadSurveys(); loadFolders(); }}>
+                    <Button danger icon={<DeleteOutlined />}>删除</Button>
                   </Popconfirm>
                 </Space>
               ),
@@ -534,6 +649,30 @@ function SurveyList() {
         />
       </Card>
 
+      {/* 移动问卷 Modal */}
+      <Modal
+        title={`移动「${moveModal.survey?.title}」`}
+        open={moveModal.open}
+        onCancel={() => setMoveModal({ open: false, survey: null })}
+        onOk={handleMoveConfirm}
+        okText="确认移动"
+        cancelText="取消"
+        confirmLoading={moving}
+      >
+        <div style={{ marginBottom: 8, fontSize: 13, color: '#888' }}>选择目标文件夹</div>
+        <Select
+          style={{ width: '100%' }}
+          placeholder="请选择文件夹"
+          value={moveTarget}
+          onChange={(v) => setMoveTarget(v)}
+          options={[
+            ...folders.map((f) => ({ label: f.name, value: f.id })),
+            { label: '未分类', value: 'unclassified' },
+          ]}
+        />
+      </Modal>
+
+      {/* 导出 CSV Modal */}
       <Modal
         title={`导出 CSV — ${exportModal.surveyTitle}`}
         open={exportModal.open}
@@ -543,9 +682,7 @@ function SurveyList() {
         cancelText="取消"
         confirmLoading={exporting}
       >
-        <div style={{ marginBottom: 8, color: '#666', fontSize: 13 }}>
-          选择填写时间范围（不选则导出全部数据）
-        </div>
+        <div style={{ marginBottom: 8, color: '#666', fontSize: 13 }}>选择填写时间范围（不选则导出全部数据）</div>
         <DatePicker.RangePicker
           style={{ width: '100%' }}
           value={exportRange}

@@ -77,10 +77,42 @@ export class AppController {
     res.attachment('contacts.csv').send(await this.app.exportContacts());
   }
 
+
+  @UseGuards(AdminAuthGuard)
+  @Get('admin/folders')
+  listFolders() {
+    return this.app.listFolders();
+  }
+
+  @UseGuards(AdminAuthGuard)
+  @Post('admin/folders')
+  createFolder(@Req() req: any, @Body('name') name: string) {
+    return this.app.createFolder(req.admin.sub, name);
+  }
+
+  @UseGuards(AdminAuthGuard)
+  @Put('admin/folders/:id')
+  updateFolder(@Param('id', ParseIntPipe) id: number, @Body('name') name: string) {
+    return this.app.updateFolder(id, name);
+  }
+
+  @UseGuards(AdminAuthGuard)
+  @Delete('admin/folders/:id')
+  deleteFolder(@Param('id', ParseIntPipe) id: number) {
+    return this.app.deleteFolder(id);
+  }
+
+  @UseGuards(AdminAuthGuard)
+  @Put('admin/surveys/:id/folder')
+  moveSurveyToFolder(@Param('id', ParseIntPipe) id: number, @Body('folderId') folderId: number | null) {
+    return this.app.moveSurveyToFolder(id, folderId ?? null);
+  }
+
   @UseGuards(AdminAuthGuard)
   @Get('admin/surveys')
-  listSurveys(@Query('keyword') keyword?: string, @Query('type') type?: SurveyType) {
-    return this.app.listSurveys({ keyword, type });
+  listSurveys(@Query('keyword') keyword?: string, @Query('type') type?: SurveyType, @Query('folderId') folderId?: string) {
+    const parsed = folderId === 'unclassified' ? 'unclassified' : folderId ? parseInt(folderId) : undefined;
+    return this.app.listSurveys({ keyword, type, folderId: parsed as any });
   }
 
   @UseGuards(AdminAuthGuard)
