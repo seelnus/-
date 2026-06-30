@@ -70,7 +70,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, ClipboardEvent, ReactNode } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 
-const API = import.meta.env.VITE_API_BASE || 'http://localhost:3000/api';
+const API = '/api';
 const FILE_BASE = API.replace(/\/api$/, '');
 const appLocale = {
   ...zhCN,
